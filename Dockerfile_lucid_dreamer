@@ -1,0 +1,56 @@
+FROM nvidia/cuda:12.1.1-devel-ubuntu22.04
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TORCH_CUDA_ARCH_LIST="8.9" \
+    CUDA_HOME="/usr/local/cuda"
+
+RUN apt-get update &&  apt-get install -y --no-install-recommends \
+    software-properties-common ca-certificates curl gnupg && \
+    add-apt-repository ppa:deadsnakes/ppa && \
+    apt-get update && apt-get install -y --no-install-recommends \
+    build-essential git ninja-build cmake \
+    python3.9 python3.9-venv python3.9-dev \
+    libgl1-mesa-glx libglm-dev && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN python3.9 -m venv /opt/ldenv
+ENV PATH="/opt/ldenv/bin:${PATH}"
+RUN pip install --no-cache-dir -U pip setuptools wheel
+
+RUN pip install --extra-index-url https://download.pytorch.org/whl/cu121 \
+        torch==2.2.0+cu121 torchvision==0.17.0+cu121 torchaudio==2.2.0+cu121
+
+RUN pip install peft diffusers==0.26.0 accelerate==0.26.1 \
+        transformers==4.40.1 scipy numpy==1.26.4 imageio[ffmpeg] \
+        opencv-python Pillow open3d==0.17.0 gradio omegaconf \
+        timm==0.6.7 plyfile==0.8.1 tqdm einops kornia wandb trimesh
+
+WORKDIR /workspace
+RUN git clone --recursive https://github.com/luciddreamer-cvlab/LucidDreamer.git
+
+RUN cd LucidDreamer/submodules/depth-diff-gaussian-rasterization-min && \
+    python setup.py install && \
+    cd ../simple-knn && \
+    python setup.py install
+
+WORKDIR /workspace/LucidDreamer
+ARG HF_TOKEN   # provide with  --build-arg HF_TOKEN=hf_your_token
+
+RUN pip install --no-cache-dir "huggingface_hub<0.26.0,>=0.25.0"
+
+RUN sed -i -e 's|revision|variant|g' \
+           -e 's|runwayml/stable-diffusion-inpainting|stable-diffusion-v1-5/stable-diffusion-inpainting|g' \
+           luciddreamer.py
+
+RUN huggingface-cli login --token "$HF_TOKEN"
+
+RUN pip install --no-cache-dir --upgrade "accelerate>=0.27.2"
+
+RUN pip install --no-cache-dir --upgrade "transformers>=4.42.1"
+
+RUN pip install --no-cache-dir --upgrade "diffusers>=0.29"
+
+VOLUME ["/workspace/LucidDreamer/output"]
+CMD ["/bin/bash"]
